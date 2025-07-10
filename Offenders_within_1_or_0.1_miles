@@ -18,8 +18,10 @@ houses_data <- read_excel("data/warren.xlsx")
 houses <- houses_data[, c("latitude", "longitude")]
 offenders <- offenders_data[, c("lat", "long")]
 
-## Calculate Offenders Within 1 Mile for Each House
-n_offenders_near_house <- numeric(nrow(houses))
+## Calculate Offenders Within 1 Mile and 0.1 Mile for Each House
+n_offenders_1mi <- numeric(nrow(houses))
+n_offenders_0.1mi <- numeric(nrow(houses))
+
 for (i in 1:nrow(houses)) {
   house_lat <- houses$latitude[i]
   house_lon <- houses$longitude[i]
@@ -27,17 +29,23 @@ for (i in 1:nrow(houses)) {
   offenders$distance <- distHaversine(cbind(offenders$long, offenders$lat),
                                       cbind(house_lon, house_lat))
 
-  nearby <- offenders %>% filter(distance <= 1609.34)  # 1 mile in meters
-  n_offenders_near_house[i] <- nrow(nearby)
-}
-houses_data$n_offenders_near_house <- n_offenders_near_house
+  nearby_1mi <- offenders %>% filter(distance <= 1609.34)   # 1 mile in meters
+  nearby_0.1mi <- offenders %>% filter(distance <= 160.93)  # 0.1 mile in meters
 
-## Calculate Distance for All House-Offender Pairs
+  n_offenders_1mi[i] <- nrow(nearby_1mi)
+  n_offenders_0.1mi[i] <- nrow(nearby_0.1mi)
+}
+
+houses_data$n_offenders_near_house_1mi <- n_offenders_1mi
+houses_data$n_offenders_near_house_0.1mi <- n_offenders_0.1mi
+
+## Preprocess Dates
 houses_data$off_market_date <- as.Date(houses_data$off_market_date, format = "%m/%d/%Y")
 offenders_data$Photo.Date <- as.Date(offenders_data$Photo.Date, format = "%m/%d/%Y")
 
+## Merge Datasets Based on Offender Distance Within 1 Mile
 haversine_distance <- function(lat1, lon1, lat2, lon2) {
-  R <- 6371  # km
+  R <- 6371
   dLat <- (lat2 - lat1) * pi/180
   dLon <- (lon2 - lon1) * pi/180
   lat1 <- lat1 * pi/180
@@ -76,7 +84,7 @@ merged <- merged %>% group_by(id) %>% mutate(row_num = row_number()) %>% filter(
 ## Final Dataset Assembly
 final_data <- merged %>%
   select(askingprice:lotsize_use, soldprice, year_sold, month_sold,
-         n_offenders_near_house, tract, daysonmarket, distance) %>%
+         n_offenders_near_house_1mi, n_offenders_near_house_0.1mi, tract, daysonmarket, distance) %>%
   filter(!is.na(soldprice))
 
 final_data$soldprice <- as.numeric(gsub("[^0-9.]", "", final_data$soldprice))
@@ -92,13 +100,22 @@ final_data <- cbind(final_data, year_dummies)
 ## Modeling
 final_data$ln_soldprice <- log(final_data$soldprice)
 
-model1 <- lm(ln_soldprice ~ n_offenders_near_house + year_sold, data = final_data)
-model2 <- lm(daysonmarket ~ n_offenders_near_house + year_sold, data = final_data)
+model_1mi_price <- lm(ln_soldprice ~ n_offenders_near_house_1mi + year_sold, data = final_data)
+model_0.1mi_price <- lm(ln_soldprice ~ n_offenders_near_house_0.1mi + year_sold, data = final_data)
+
+model_1mi_days <- lm(daysonmarket ~ n_offenders_near_house_1mi + year_sold, data = final_data)
+model_0.1mi_days <- lm(daysonmarket ~ n_offenders_near_house_0.1mi + year_sold, data = final_data)
 
 ## Output
-summary(model1)
-summary(model2)
+summary(model_1mi_price)
+summary(model_0.1mi_price)
+summary(model_1mi_days)
+summary(model_0.1mi_days)
 
-write_xlsx(final_data, "output/final_data_1mile.xlsx")
-ggplot(final_data, aes(x = n_offenders_near_house, y = soldprice)) +
-  geom_point()
+write_xlsx(final_data, "output/final_data_comparison.xlsx")
+
+ggplot(final_data, aes(x = n_offenders_near_house_1mi, y = soldprice)) +
+  geom_point() + ggtitle("Sold Price vs Offenders within 1 Mile")
+
+ggplot(final_data, aes(x = n_offenders_near_house_0.1mi, y = soldprice)) +
+  geom_point() + ggtitle("Sold Price vs Offenders within 0.1 Mile")
