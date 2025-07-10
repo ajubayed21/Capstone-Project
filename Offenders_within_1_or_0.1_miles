@@ -11,9 +11,10 @@ library(fastDummies)
 library(writexl)
 library(readr)
 
+setwd("/Users/abdullahaljubayed/Desktop/Capstone Project")
 ## Load Data
-offenders_data <- read_excel("data/offenderdata_original.xlsx", sheet = 2)
-houses_data <- read_excel("data/warren.xlsx")
+offenders_data <- read_excel("offenderdata_original.xlsx", sheet = 2)
+houses_data <- read_excel("warren.xlsx")
 
 houses <- houses_data[, c("latitude", "longitude")]
 offenders <- offenders_data[, c("lat", "long")]
