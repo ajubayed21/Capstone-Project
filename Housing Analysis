@@ -1,0 +1,104 @@
+## Load Required Libraries
+library(dplyr)
+library(readxl)
+library(geosphere)
+library(lubridate)
+library(ggplot2)
+library(sandwich)
+library(lmtest)
+library(estimatr)
+library(fastDummies)
+library(writexl)
+library(readr)
+
+## Load Data
+offenders_data <- read_excel("data/offenderdata_original.xlsx", sheet = 2)
+houses_data <- read_excel("data/warren.xlsx")
+
+houses <- houses_data[, c("latitude", "longitude")]
+offenders <- offenders_data[, c("lat", "long")]
+
+## Calculate Offenders Within 1 Mile for Each House
+n_offenders_near_house <- numeric(nrow(houses))
+for (i in 1:nrow(houses)) {
+  house_lat <- houses$latitude[i]
+  house_lon <- houses$longitude[i]
+
+  offenders$distance <- distHaversine(cbind(offenders$long, offenders$lat),
+                                      cbind(house_lon, house_lat))
+
+  nearby <- offenders %>% filter(distance <= 1609.34)  # 1 mile in meters
+  n_offenders_near_house[i] <- nrow(nearby)
+}
+houses_data$n_offenders_near_house <- n_offenders_near_house
+
+## Calculate Distance for All House-Offender Pairs
+houses_data$off_market_date <- as.Date(houses_data$off_market_date, format = "%m/%d/%Y")
+offenders_data$Photo.Date <- as.Date(offenders_data$Photo.Date, format = "%m/%d/%Y")
+
+haversine_distance <- function(lat1, lon1, lat2, lon2) {
+  R <- 6371  # km
+  dLat <- (lat2 - lat1) * pi/180
+  dLon <- (lon2 - lon1) * pi/180
+  lat1 <- lat1 * pi/180
+  lat2 <- lat2 * pi/180
+  a <- sin(dLat/2)^2 + cos(lat1) * cos(lat2) * sin(dLon/2)^2
+  c <- 2 * asin(sqrt(a))
+  R * c
+}
+
+result <- data.frame()
+for (i in 1:nrow(houses_data)) {
+  for (j in 1:nrow(offenders_data)) {
+    d_km <- haversine_distance(houses_data$latitude[i], houses_data$longitude[i],
+                                offenders_data$lat[j], offenders_data$long[j])
+    d_mi <- d_km * 0.621371
+    if (d_mi <= 1) {
+      result <- rbind(result, data.frame(
+        house = i,
+        offender = j,
+        distance = d_mi,
+        photo_date = offenders_data$Photo.Date[j],
+        off_market_date = houses_data$off_market_date[i]
+      ))
+    }
+  }
+}
+
+result$before_sale <- result$photo_date < result$off_market_date
+filtered_result <- result[result$before_sale, ]
+
+## Merge and Filter
+houses_data$id <- seq_len(nrow(houses_data))
+merged <- merge(houses_data, filtered_result, by.x = "id", by.y = "house", all = TRUE)
+merged <- merged %>% group_by(id) %>% mutate(row_num = row_number()) %>% filter(row_num == 1)
+
+## Final Dataset Assembly
+final_data <- merged %>%
+  select(askingprice:lotsize_use, soldprice, year_sold, month_sold,
+         n_offenders_near_house, tract, daysonmarket, distance) %>%
+  filter(!is.na(soldprice))
+
+final_data$soldprice <- as.numeric(gsub("[^0-9.]", "", final_data$soldprice))
+final_data <- final_data %>% na.omit()
+
+## Create Dummy Variables
+tract_dummies <- dummy_cols(final_data$tract, remove_first_dummy = TRUE)
+final_data <- cbind(final_data, tract_dummies)
+
+year_dummies <- dummy_cols(final_data$year_sold, remove_first_dummy = TRUE)
+final_data <- cbind(final_data, year_dummies)
+
+## Modeling
+final_data$ln_soldprice <- log(final_data$soldprice)
+
+model1 <- lm(ln_soldprice ~ n_offenders_near_house + year_sold, data = final_data)
+model2 <- lm(daysonmarket ~ n_offenders_near_house + year_sold, data = final_data)
+
+## Output
+summary(model1)
+summary(model2)
+
+write_xlsx(final_data, "output/final_data_1mile.xlsx")
+ggplot(final_data, aes(x = n_offenders_near_house, y = soldprice)) +
+  geom_point()
