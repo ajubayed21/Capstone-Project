@@ -11,11 +11,12 @@ library(fastDummies)
 library(writexl)
 library(texreg)
 library(stargazer)
-
-# Load Data (Assume 'combined_data' is already loaded with relevant fields)
+setwd("/Users/abdullahaljubayed/Desktop/Capstone Project")
 # combined_data should include offender proximity counts (1 mile and 0.1 mile)
+combined_data <- read_excel("combined_final_data.xlsx")
 
 # Prepare Main Analysis Dataset
+
 prime_data <- combined_data %>%
   mutate(
     ln_soldprice = log(soldprice),
